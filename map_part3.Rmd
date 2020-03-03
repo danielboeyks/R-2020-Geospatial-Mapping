@@ -1,0 +1,158 @@
+---
+title: "Geospatial Data with R Part 3 - SF and Raster Objects"
+author: "Daniel Kai Sheng Boey"
+date: "3rd March 2019"
+output: 
+  html_notebook:
+    toc: true
+---
+
+## Directories
+```{r}
+setwd("C:/Users/danie/OneDrive/Hertie Spring 20/R Geospatial Data")
+library(tidyverse)
+library(reshape2)
+library(tmap)
+library(raster)
+library(RColorBrewer)
+library(classInt)
+library(viridisLite)
+library(sp)
+library(ggmap)
+library(sf)
+library(rgdal)
+```
+
+
+# Chapter 4: Manipulating SF and Raster Data
+
+
+```{r}
+library(lubridate)
+df<-read.csv("Emergency_Response_Incidents.csv")
+df_s_all<-df[complete.cases(df),] # Obtaining only complete cases
+df_s<-df_s_all[,]
+str(df_s)
+```
+## Getting Geospatial Map of NYC
+Note: GMap from Google Static Maps API; New York City borough shapefile from: https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm
+
+```{r}
+### Map file of NYCwith preset key from Google API ###
+#Note: OSM is not available
+map_nyc <- get_map(location = c(lon=df_s$Longitude[100],lat = df_s$Latitude[100]), zoom = 10)
+
+### NYC Neighbourhood Data
+shp_nyc_NTA<- st_read("geo_export_e52111a7-ba1f-48e5-876d-c912e4640c4b.shp")
+#summary(shp_nyc_bor)
+
+### NYC Boroughs Shapefile
+shp_nyc_bor<-st_read("geo_export_5912ccc8-6f97-4ae2-bf31-ce6d35ef2fb4.shp")
+
+### Confirming projection system of shapefile; default GMaps CRS is WGS84 ###
+st_crs(shp_nyc_bor)
+st_crs(shp_nyc_NTA)
+
+### Creating SF file for database
+emr_nyc<-st_as_sf(df_s,coords=c("Longitude","Latitude"))
+
+### Checks for consistent CRS
+st_crs(emr_nyc)
+st_crs(emr_nyc)<-st_crs(shp_nyc_NTA)
+st_crs(shp_nyc_NTA)==st_crs(emr_nyc)
+
+### Initial Plot
+plot(st_geometry(shp_nyc_NTA))
+plot(emr_nyc, add = TRUE, col = "yellow")
+
+
+
+```
+
+## Borough Level Data Analysis
+The plot below shows the density of emergency response incidents per 1 million sq km. I begin by using the function $st_intersects()$ and then plot based on each borough. Of the five boroughs, Manhattan has the highest incident density rate, which is not surprising. However, It seems like Manhattan's high rate has eclipsed that of the other boroughs. We can change this by specifying the breaks in the data visualized. 
+```{r}
+### Calculating Statistics for Borough-Level
+count   <- st_intersects(shp_nyc_bor,emr_nyc)
+#Counting number of occurences
+n_bor   <-lengths(count) 
+#Calculating Areas
+area_bor<-unclass(st_area(shp_nyc_bor))
+#Calculating Density
+den_bor <-n_bor/area_bor
+
+comb_bor <- shp_nyc_bor %>%
+  mutate(n = n_bor, den = den_bor, area = area_bor, den1mil = den_bor*1e6)
+head(shp_nyc_NTA)
+### Plotting
+maps_bor<- mapview(shp_nyc_NTA,zcol ="ntaname", 
+          layer.name = "New York Neighborhoods", 
+          lwd = 1,
+          color = "black",
+          alpha.regions = 0, hide = TRUE,legend=FALSE)+
+  mapview(comb_bor, zcol = "den1mil", 
+          col.regions = sf.colors(10), 
+          alpha.regions = 0.8, 
+          layer.name = "Incidents per 1 million sq km",
+          at = c(2,5,10,3060))
+maps_bor
+
+
+```
+
+
+## NTA Level Data Mapping
+This map is more useful as we can see finer detail abotu the relative number of incidents, controlling for the area of neighborhoods. Below, we observe that SoHo-TriBeCa-Civic Center-Little Italy has the highest number of incidents. Interestingly, we also see that Kew Gardens in Queens has an unusually high emergency incident rate vis-a-vis other neighborhoods in its surroundings and in Queens. 
+```{r}
+### Finding out density of incidents per neighborhood
+count   <- st_intersects(shp_nyc_NTA,emr_nyc)
+#Counting number of occurences
+n_res   <-lengths(count) 
+#Calculating Areas
+area_NTA<-unclass(st_area(shp_nyc_NTA))
+#Calculating Density
+den_NTA <-n_res/area_NTA
+
+comb_NTA <- shp_nyc_NTA %>%
+  mutate(n = n_res, den = den_NTA, area = area_NTA, den1mil = den_NTA*1e6)
+
+
+### Plotting
+# Statistical Viewing
+ggplot(comb_NTA)+
+  geom_histogram(aes(x = n))
+ggplot(comb_NTA, aes(x = n, y = area))+
+  geom_point()+
+  stat_smooth()
+# Using Map View
+library(mapview)
+maps_NTA<- mapview(shp_nyc_bor,zcol ="boro_name", 
+          layer.name = "New York Boroughs", 
+          lwd = 5,
+          color = "black",
+          alpha.regions = 0)+
+  mapview(comb_NTA, zcol = "den1mil", 
+          col.regions = sf.colors(10), 
+          alpha.regions = 0.8, 
+          layer.name = "Incidents per 1 million sq km",
+          at = seq(0,200,20))
+
+maps_NTA
+```
+## Using Thematic Maps
+```{r}
+# Using Thematic Maps
+yellowred<-brewer.pal(n=5,"YlOrRd")
+tmap_mode("view")
+tm_NTA<-tm_shape(comb_NTA)+
+  tm_borders()+
+  tm_fill(col = "n", title = "Number of Incidents", 
+          palette = yellowred, style = "quantile",
+          alpha = 0.6)+
+  tm_shape(shp_nyc_bor)+
+  tm_borders(col = "grey60",lwd = 2)+
+  tm_basemap
+tm_NTA
+tmap_save(filename = "tm_NTA.html")
+```
+

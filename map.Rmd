@@ -1,0 +1,149 @@
+---
+title: "Geospatial Data with R Part 1"
+author: "Daniel Kai Sheng Boey"
+date: "29th February 2019"
+output: 
+  html_notebook:
+    toc: true
+---
+## Directories
+```{r}
+setwd("C:/Users/danie/OneDrive/Hertie Spring 20/R Geospatial Data")
+library(tidyverse)
+library(reshape2)
+library(tmap)
+library(raster)
+library(RColorBrewer)
+library(classInt)
+library(viridisLite)
+library(sp)
+library(ggmap)
+library(sf)
+library(rgdal)
+```
+
+
+# Chapter One: Simple Data using SPDF
+Using simple SPDF based on GADM.
+```{r}
+# Getting SPDF of India
+India <- getData("GADM", country = "India", level = 1)
+str(India, max.level = 2)
+summary(India@data)
+tmap_mode("plot")
+```
+```{r}
+# Using Quick Thematic Maps
+qtm(India)
+
+# Using Thematic Maps
+tm_shape(India)+
+  tm_borders()+
+  tm_fill(col = "HASC_1")+
+  tm_legend(outside = TRUE, outside.position = c("right"))+
+tmap_options(max.categories = 36) 
+```
+# Chapter Two: Netherlands Simple Feature Data Sets
+## Simple Analysis
+Simple summaries/classes to observe the dataset's characteristics.
+```{r}
+# Here we see municipal level data of Netherlands
+data(NLD_muni)
+class(NLD_muni)
+data(NLD_prov)
+summary(NLD_muni,max.level=2)
+```
+## Quick Thematic Maps/Quick Plotting with Color Palettes
+Lets say we want to see the provinces with high percentages of the population >65 years old. 
+```{r}
+# Quick Thematic Map
+qtm(NLD_muni)
+print(NLD_muni) #sp dataset
+
+# Color Palette
+yellowred<-brewer.pal(n=9,"YlOrRd")
+
+# Plotting
+tm_shape(NLD_muni) + 
+  tm_fill("pop_65plus", palette = yellowred,title = "Percentage of County >65 years")+
+  tm_borders(alpha = 0.7)+
+  tm_layout(title.size = 1)+
+    tm_legend(outside = TRUE, outside.position = c('bottom','right'))
+
+# New Theme
+tm_shape(NLD_muni) + 
+  tm_fill("pop_65plus", palette = yellowred,title = "Percentage of County >65 years")+
+  tm_style("cobalt")+
+  tm_borders(alpha = 0.5)+
+  tm_shape(NLD_prov)+
+  tm_borders(lwd = 1,"white")
+
+tmap_save(filename = "test65.html")
+```
+## Faceting
+Here, I facet the data based upon the five population categories. 
+```{r}
+# Trying faceting
+facets = c("pop_0_14", "pop_15_24","pop_25_44","pop_45_64","pop_65plus")
+nld_map <-tm_shape(NLD_muni)+
+  tm_fill(facets)+
+  tm_facets(nrow =2)+
+#  tm_basemap(server = "Google")+ 
+  tm_style("cobalt")+
+  tm_borders(alpha = 0.7)
+#  tmap_options(limits = c(facets.view = 5))
+
+
+#Suppressed to save memory
+#nld_map
+```
+To distinguish among percentages across all, we can use fixed breaks (although it's not very useful here) or quantile breaks. 
+```{r}
+#Fixed breaks
+nld_map2 <-tm_shape(NLD_muni)+
+  tm_fill(facets, style = "fixed",breaks = c(5,10,15,20,25,30))+
+  tm_facets(nrow =2, sync = TRUE)+
+#  tm_basemap(server = "Google")+ 
+  tm_style("cobalt")+
+  tm_borders(alpha = 0.7)+
+  tmap_options(limits = c(facets.view = 5))
+#nld_map2
+
+# Quantile breaks
+nld_map3 <-tm_shape(NLD_muni)+
+  tm_fill(facets, style = "quantile")+
+  tm_facets(nrow =2, sync = TRUE)+
+#  tm_basemap(server = "Google")+ 
+  tm_style("cobalt")+
+  tm_borders(alpha = 0.7)+
+  tmap_options(limits = c(facets.view = 5))
+
+nld_map3
+```
+## Data Manipulation + Plotting
+What if we want to know the biggest population category in a particular province? First, I pull out the relevant variables in the dataframe within the $sf$. Then, I manipulate to find the population category which has the highest proportion within each municipality.
+```{r}
+df <- data.frame(NLD_muni[,c("code","pop_0_14", "pop_15_24","pop_25_44","pop_45_64","pop_65plus")])
+#str(df)
+#Remove geometry and finding the category with the highest pop category
+df$geometry <- NULL 
+df_m<-df %>%
+  dplyr::select("code","pop_0_14", "pop_15_24","pop_25_44","pop_45_64","pop_65plus")%>%
+  mutate(high_cat = colnames(df)[apply(df[,!names(df)%in%"code"],1,which.max)+1])
+
+#str(df_m)
+
+#Merge back into dataset
+NLD_muni$high_cat <- df_m$high_cat
+
+# New Theme
+nld_highpop<- tm_shape(NLD_muni,name = "name") + 
+  tm_fill("high_cat",title = "Highest Population Cateogry",labels = c("0-14 years old","25-44 years old","45-64 years old"))+
+  tmap_style("col_blind")+
+  tm_borders(alpha = 0.5)+
+  tm_shape(NLD_prov)+
+  tm_borders(lwd = 1,"white")
+tmap_mode("view")
+nld_highpop
+tmap_save(filename = "test_high.html")
+```

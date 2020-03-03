@@ -1,0 +1,140 @@
+---
+title: "Geospatial Data with R Part 2"
+author: "Daniel Kai Sheng Boey"
+date: "29th February 2019"
+output: 
+  html_notebook:
+    toc: true
+---
+
+## Directories
+```{r}
+setwd("C:/Users/danie/OneDrive/Hertie Spring 20/R Geospatial Data")
+library(tidyverse)
+library(reshape2)
+library(tmap)
+library(raster)
+library(RColorBrewer)
+library(classInt)
+library(viridisLite)
+library(sp)
+library(ggmap)
+library(sf)
+library(rgdal)
+```
+
+
+# Chapter 3: Using ggmap and get_map
+## NYC EMS Data
+Data taken from: https://data.cityofnewyork.us/Public-Safety/Emergency-Response-Incidents/pasr-j7fb. It details the type and address of emergency incident to which OEM responded.
+
+```{r}
+library(lubridate)
+df<-read.csv("Emergency_Response_Incidents.csv")
+df_s_all<-df[complete.cases(df),] # Obtaining only complete cases
+df_s<-df_s_all[1:100,]
+str(df_s)
+```
+## Getting Geospatial Map of NYC
+Note: GMap from Google Static Maps API; New York City borough shapefile from: https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm
+
+```{r}
+### Map file of NYCwith preset key from Google API ###
+#Note: OSM is not available
+map_nyc <- get_map(location = c(lon=df_s$Longitude[100],lat = df_s$Latitude[100]), zoom = 10)
+
+### For just outlines of states
+#library(maps)
+#mapnyc<-map('county', 'new york')
+#plot(mapnyc)
+#map_nyc2<-map_data(mapnyc)
+
+#dir()
+
+### NYC Boroughs Shapefile
+shp_nyc_bor<- readOGR("geo_export_c588a074-8667-4647-8342-c5b745d7e53f.shp")
+#summary(shp_nyc_bor)
+
+### Confirming projection system of shapefile; default GMaps CRS is WGS84 ###
+proj4string(shp_nyc_bor)
+
+### Transforming shapefile into points for ggmap ###
+pot_nyc_bor <- fortify(shp_nyc_bor)
+#str(pot_nyc_bor)
+
+### Plotting ###
+#tiff("nyc_emergency.tiff", width = 4, height = 4, units = 'in', res = 300)
+map_1<-ggmap(map_nyc,maprange = TRUE)+
+  geom_point(data = df_s,aes(x=Longitude,y=Latitude))+
+  geom_polygon(aes(x=long,y=lat, group=group, alpha=0.25), data=pot_nyc_bor, fill='white') +
+geom_polygon(aes(x=long,y=lat, group=group), data=pot_nyc_bor, color='black', fill=NA)
+
+
+
+map_2<-map_1 + stat_density2d(aes(x = Longitude, y = Latitude, fill = ..level.., alpha =..level..), size = 0.2, bins = 50, data = df_s, geom = "polygon")+
+  labs(title ="Density of Emergency Responses in NYC")
+```
+```{r}
+map_2
+
+ggsave("nycemergency.tiff",dpi = 300,width = 4, height = 4, units = c("in"))
+```
+In the map, we can see that the responses are concentrated in the Bronx, downtown Manhattan, downtown Brooklyn and the middle of Queens in a sample of 100. Whilst the plot may not be very useful for now, I will use further edits to improve the map in the future.
+
+## Sf
+```{r}
+class(map_nyc)
+
+ggmap_rast = function(map){
+  map_bbox = attr(map, 'bb') 
+  .extent = extent(as.numeric(map_bbox[c(2,4,1,3)]))
+  my_map = raster(.extent, nrow= nrow(map), ncol = ncol(map))
+  rgb_cols = setNames(as.data.frame(t(col2rgb(map))), c('red','green','blue'))
+  red = my_map
+  values(red) = rgb_cols[['red']]
+  green = my_map
+  values(green) = rgb_cols[['green']]
+  blue = my_map
+  values(blue) = rgb_cols[['blue']]
+  stack(red,green,blue)
+}
+
+gr1 = ggmap_rast(map = map_nyc)
+plotRGB(gr1)
+
+
+qtm(gr1)
+
+class(gr1)
+bb = bbox(gr1)
+
+# Stitching together many bounding boxes
+n_col = 21 # width in bb units ################## add your input here 
+n_row = 20 # height ################## add your input here
+
+bb_array = array(NA, dim = c(2, 2, n_row, n_col))
+bb_array[1,,1,1] = bb[1, ] - ((n_col - 1) / 2) * (bb[1, 2] - bb[1, 1]) # top left x
+bb_array[2,,1,1] = bb[1, ] - ((n_row - 1)  / 2) * (bb[2, 2] - bb[2, 1]) # top left y
+for(i in 1:n_col){
+  for(j in 1:n_row){
+    bb_array[1,,j,i] = bb[1, ] - ((n_col - 1) / 2) * (bb[1, 2] - bb[1, 1]) + (i - 1)* (bb[1, 2] - bb[1, 1])
+    bb_array[2,,j,i] = bb[2, ] - ((n_row - 1)  / 2) * (bb[2, 2] - bb[2, 1]) + (j - 1)* (bb[2, 2] - bb[2, 1])
+  }
+}
+
+# Using the bounding boxes to download the images
+grm = ggmap_rast(get_map(bb_array[,,1,1], maptype = "satellite"))
+plot(grm)
+
+for(i in 1:n_col){
+  for(j in 1:n_row){
+    gr = ggmap_rast(get_map(bb_array[,,j,i], maptype = "satellite"))
+    grm = raster::merge(grm, gr, tolerance = 5)
+  }
+}
+plotRGB(grm)
+
+writeRaster(grm, filename = "nyc_gmap.tiff", format="GTiff", overwrite = TRUE)
+
+```
+
