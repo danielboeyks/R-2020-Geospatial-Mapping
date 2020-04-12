@@ -7,7 +7,7 @@ output:
     toc: true
 ---
 ## Directories
-## TROLOLOLOL
+
 ```{r}
 setwd("C:/Users/danie/OneDrive/Hertie Spring 20/R Geospatial Data")
 library(tidyverse)
